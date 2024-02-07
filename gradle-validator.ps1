@@ -1,6 +1,5 @@
 param (
-    [switch] $AllowSnapshots, # Whether to fetch snapshot build checksums from the gradle servers (takes longer to run the script)
-    [String[]] $AllowChecksums # Array of checksum overrides that count as valid checksums
+    [String[]] $AllowChecksums = @() # Array of checksum overrides that count as valid checksums
 )
 
 Write-Host "
@@ -15,61 +14,70 @@ Write-Host "
 -------------------------------------------------------------------------------
 "
 
-# Find gradle-wrapper.jar files
-$wrappers = @()
+# Globals
+$Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$Wrappers = New-Object 'System.Collections.Generic.Dictionary[String,String]'
+$CheckedVersions = New-Object 'System.Collections.Generic.HashSet[String]'
+$WrapperVersionRegex = "(?m)distributionUrl=https\\\:\/\/services\.gradle\.org\/distributions\/gradle-([0-9]\.[0-9](?:\.[0-9])?(?:-(?:(?:rc|milestone)-[0-9])|(?:[0-9]{14}\+[0-9]{4}))?)-bin\.zip"
 
-Get-ChildItem -Path "." -Recurse | ForEach-Object {
-    if ($_.Name -Eq "gradle-wrapper.jar") {
-        $wrappers += $_.FullName
+function Try-Match {
+    [CmdletBinding()]
+    param (
+        [Parameter(ValueFromPipeline=$true)]
+        [String] $Hash,
+        [String] $Version = "Override"
+    )
+    process {
+        if ($Wrappers.Remove($Hash)) {
+            Write-Host "Found gradle wrapper version '$($Version)' matching sha256 '$($Hash)'."
+            if ($Wrappers.Count -eq 0) {
+                $Stopwatch.Stop()
+                Write-Host "`nDid not find any potentially malicious gradle wrappers."
+                Write-Host "Completed script execution in $($Stopwatch.ElapsedMilliseconds) ms."
+                exit
+            }
+        }
     }
 }
 
-if ($wrappers.Length -Eq 0) {
-    Write-Host "Could not find 'gradle-wrapper.jar' file."
-    exit
-} else {
-    Write-Host "Found $($wrappers.Length) gradle wrapper(s) :"
-    foreach ($wrapper in $wrappers) {
-        $checksum = (Get-FileHash $wrapper -Algorithm SHA256).Hash.ToLower()
-        Write-Host "- $($wrapper) ($($checksum))"
-    }
+# Search for files
+Get-ChildItem -Recurse | Where-Object -Property Name -EQ "gradle-wrapper.jar" | ForEach-Object {
+    $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+    $Wrappers[$hash] = $_.FullName
 }
+
+if ($Wrappers.Count -Eq 0) { Write-Host "Could not find 'gradle-wrapper.jar' file."; exit }
+
+Write-Host "Found $($Wrappers.Length) gradle wrapper(s) :"
+$Wrappers.GetEnumerator().ForEach({ Write-Host "- $($_.Value) ($($_.Key))" })
 
 Write-Host ""
 
-# Get wrapper checksums from gradle api
-$checksums = @()
-if ($null -Ne $AllowChecksums) {
-    $checksums += $AllowChecksums
+# Validate checksums against overrides
+if ($AllowChecksums.Length -Gt 0) {
+    Write-Host "Validating wrapper(s) against overrides..."
+    ForEach-Object $AllowChecksums | Try-Match -Hash $_
 }
 
-Write-Host "Getting valid checksums from gradle servers... `n"
+# Validate checksums against current distribution via gradle-wrapper.properties
+Write-Host "Validating wrapper(s) against current distribution..."
 
-$gradleVersions = Invoke-RestMethod -Uri "https://services.gradle.org/versions/all"
-$finished = 0
-foreach ($gradleVersion in $gradleVersions) {
-    Write-Progress -Activity "Getting checksums" -PercentComplete ($finished / $gradleVersions.Length * 100)
-    $checksumUrl = $gradleVersion.wrapperChecksumUrl
-    if ($null -Ne $checksumUrl) {
-        if (!($gradleVersion.snapshot) -Or $snapshot) {
-            $checksums += Invoke-RestMethod -Uri $checksumUrl
-        }
-    }
-    $finished += 1
+Get-ChildItem -Recurse | Where-Object -Property Name -EQ "gradle-wrapper.properties" | ForEach-Object {Get-Content $_.FullName} | Where-Object {$_ -match $WrapperVersionRegex} | ForEach-Object {
+    $version = $Matches[1]
+    $checksum = Invoke-RestMethod -Uri "https://services.gradle.org/distributions/gradle-$($version)-wrapper.jar.sha256" -Method Get
+    Try-Match -Hash $checksum -Version $version
+    $CheckedVersions += $version
 }
 
-# Validate wrappers against checksums
-Write-Host "Validating wrappers against checksums... `n"
+# Validate checksums against gradle via
+Write-Host "Validating wrapper(s) against gradle servers...`n"
 
-$safe = $true
-foreach ($wrapper in $wrappers) {
-    $checksum = (Get-FileHash $wrapper -Algorithm SHA256).Hash.ToLower()
-    if (-Not $checksums.Contains($checksum)) {
-        Write-Host "Found potentially malicious gradle wrapper '$($wrapper)'!"
-        $safe = $false
-    }
+(Invoke-RestMethod -Uri "https://services.gradle.org/versions/all" -Method Get -ContentType 'application/json') | Where-Object {
+    $_.wrapperChecksumUrl -ne $null -and  # filter distributions without wrapper
+    !($CheckedVersions.Contains($_.version))     # filter already checked distributions
+} | ForEach-Object {
+    Try-Match -Hash (Invoke-RestMethod -Uri $_.wrapperChecksumUrl -Method Get) -Version $_.version
 }
 
-if ($safe) {
-    Write-Host "Did not find any potentially malicious gradle wrappers."
-}
+Write-Host "`nFound $($Wrappers.Count) potentially malicious gradle wrapper(s):"
+$Wrappers.GetEnumerator().ForEach({ Write-Host "- $($_.Value) ($($_.Key))" })
