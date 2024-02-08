@@ -15,7 +15,6 @@ Scripts to easily and painlessly find malicious gradle wrapper jars.
 ### Powershell
 
 ```
-gradle-validator.ps1 [[-AllowChecksums] <string[]>] [-AllowSnapshots]
+gradle-validator.ps1 [[-AllowChecksums] <string[]>]
 ```
-`-AllowSnapshots`: Whether to fetch snapshot build checksums from the gradle servers (takes longer to run the script)
 `-AllowChecksums`: Array of checksum overrides that count as valid checksums
