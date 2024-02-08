@@ -54,9 +54,9 @@ Get-ChildItem -Recurse | Where-Object -Property Name -EQ "gradle-wrapper.jar" | 
     $Wrappers[$hash] = $_.FullName
 }
 
-if ($Wrappers.Count -eq 0) { Write-Host "Could not find any 'gradle-wrapper.jar' files." }
+if ($Wrappers.Count -eq 0) { Write-Host "`nCould not find any 'gradle-wrapper.jar' files." }
 else {
-    Write-Host "`nFound $($Wrappers.Count) gradle wrapper(s) :"
+    Write-Host "Found $($Wrappers.Count) gradle wrapper(s) :"
     $Wrappers.GetEnumerator().ForEach({ Write-Host "- $($_.Value) ($($_.Key))" })
 }
 
@@ -92,7 +92,7 @@ if ($AllowChecksums.Length -Gt 0) {
 # Validate checksums against current distribution via gradle-wrapper.properties
 if ($Properties.Length -ne 0) {
     Write-Host "`nValidating wrapper(s) against current distribution..."
-    ForEach-Object $Properties {
+    $Properties.GetEnumerator() | ForEach-Object {
         Write-Verbose "Processing $($_)"
         $content = Get-Content -Path $_
         $wrapperVersionMatch = $WrapperVersionRegex.Match($content)
