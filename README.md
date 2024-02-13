@@ -5,7 +5,7 @@
 / /_/ / /  / /_/ / /_/ / /  __/    | |/ / /_/ / / / /_/ / /_/ / /_/ /_/ / /
 \____/_/   \__,_/\__,_/_/\___/     |___/\__,_/_/_/\__,_/\__,_/\__/\____/_/
 
-                                                             By crobsby !! :3
+                                                     Copyright (c) 2024 Crosby
 ```
 
 Scripts to easily and painlessly find malicious gradle wrapper jars.
